@@ -1,0 +1,11 @@
+{
+  "name": "malitan",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Malitan (מעליתן) - פלטפורמת ניהול לחברות מעליות",
+  "workspaces": ["apps/*", "packages/*", "automations/*"],
+  "scripts": {
+    "format": "npx prettier . --write",
+    "lint": "echo \"(נוסיף לינט בהמשך)\" && exit 0"
+  }
+}
