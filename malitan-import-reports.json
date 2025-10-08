@@ -1,0 +1,210 @@
+{
+  "name": "Malitan - Import Inspector Reports (IMAP → Supabase)",
+  "nodes": [
+    {
+      "parameters": {
+        "downloadAttachments": true,
+        "options": {
+          "allowList": "pdf"
+        }
+      },
+      "id": "EmailTriggerIMAP",
+      "name": "Email Trigger (IMAP)",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        260,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const items = $input.all();\nfunction sanitize(name) {\n  const parts = name.split(\".\");\n  const ext = parts.length > 1 ? \".\" + parts.pop() : \"\";\n  const base = parts.join(\".\");\n  const safe = base.normalize(\"NFKD\").replace(/[^\\w.-]+/g, \"_\");\n  return (safe || \"file\") + ext.toLowerCase();\n}\nconst out = [];\nfor (const it of items) {\n  const subj = it.json.subject || \"\";\n  const m = subj.match(/\\bB-\\d{5}\\b/);\n  const building_code = m ? m[0] : null;\n  const dateMatch = subj.match(/\\b(20\\d{2}-\\d{2}-\\d{2})\\b/);\n  const report_date = dateMatch ? dateMatch[1] : null;\n  const binKeys = Object.keys(it.binary || {});\n  const firstKey = binKeys.find(k => k.startsWith(\"attachment_\")) || binKeys[0];\n  if (!firstKey) continue;\n  const b = it.binary[firstKey];\n  const original = b.fileName || \"report.pdf\";\n  const safeName = sanitize(original);\n  out.push({\n    json: {\n      subject: subj,\n      building_code,\n      report_date,\n      from_email: (it.json.from && (it.json.from.text || it.json.from.address || it.json.from)) || null,\n      safeName,\n      SUPABASE_URL: \"https://<YOUR_PROJECT_REF>.supabase.co\",\n      SUPABASE_SERVICE_ROLE_KEY: \"<YOUR_SERVICE_ROLE_KEY>\"\n    },\n    binary: { data: b }\n  });\n}\nreturn out;"
+      },
+      "id": "ParseMeta",
+      "name": "Parse Meta",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        520,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$json.SUPABASE_URL}}/rest/v1/buildings?select=id,company_id,building_code&building_code=eq.{{$json.building_code}}",
+        "options": {
+          "headers": {
+            "parameters": [
+              {
+                "name": "apikey",
+                "value": "={{$json.SUPABASE_SERVICE_ROLE_KEY}}"
+              },
+              {
+                "name": "Authorization",
+                "value": "={{'Bearer ' + $json.SUPABASE_SERVICE_ROLE_KEY}}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "LookupBuilding",
+      "name": "Lookup Building (REST)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const resp = $json;\nconst row = Array.isArray(resp) && resp[0] ? resp[0] : null;\nconst company_id = row && row.company_id ? row.company_id : \"unknown\";\nconst building_id = row && row.id ? row.id : null;\nconst code = (row && row.building_code) || $item(0).$json.building_code || \"unknown\";\nconst dt = new Date($item(0).$json.report_date || Date.now());\nconst y = dt.getUTCFullYear();\nconst m = String(dt.getUTCMonth() + 1).padStart(2, \"0\");\nconst path = `company/${company_id}/buildings/${code}/${y}-${m}/${Date.now()}__${$item(0).$json.safeName}`;\nreturn [{\n  json: {\n    company_id,\n    building_id,\n    code,\n    path,\n    subject: $item(0).$json.subject,\n    from_email: $item(0).$json.from_email,\n    report_date: $item(0).$json.report_date,\n    safeName: $item(0).$json.safeName,\n    SUPABASE_URL: $item(0).$json.SUPABASE_URL,\n    SUPABASE_SERVICE_ROLE_KEY: $item(0).$json.SUPABASE_SERVICE_ROLE_KEY\n  },\n  binary: { data: $items(0).item.binary.data }\n}];"
+      },
+      "id": "BuildPath",
+      "name": "Build Path",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.SUPABASE_URL}}/storage/v1/object/reports/{{$json.path}}",
+        "sendBinaryData": true,
+        "binaryPropertyName": "data",
+        "options": {
+          "headers": {
+            "parameters": [
+              {
+                "name": "apikey",
+                "value": "={{$json.SUPABASE_SERVICE_ROLE_KEY}}"
+              },
+              {
+                "name": "Authorization",
+                "value": "={{'Bearer ' + $json.SUPABASE_SERVICE_ROLE_KEY}}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "UploadStorage",
+      "name": "Upload to Storage (POST Binary)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1300,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.SUPABASE_URL}}/rest/v1/inspector_reports",
+        "jsonParameters": true,
+        "options": {
+          "headers": {
+            "parameters": [
+              {
+                "name": "apikey",
+                "value": "={{$json.SUPABASE_SERVICE_ROLE_KEY}}"
+              },
+              {
+                "name": "Authorization",
+                "value": "={{'Bearer ' + $json.SUPABASE_SERVICE_ROLE_KEY}}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Prefer",
+                "value": "return=representation"
+              }
+            ]
+          }
+        },
+        "bodyParametersJson": "={\n  \"company_id\": {{$json.company_id ? '\"' + $json.company_id + '\"' : null}},\n  \"building_id\": {{$json.building_id ? '\"' + $json.building_id + '\"' : null}},\n  \"report_date\": {{$json.report_date ? '\"' + $json.report_date + '\"' : null}},\n  \"source\": \"email\",\n  \"subject\": \"{{$json.subject}}\",\n  \"from_email\": {{ $json.from_email ? '\"' + $json.from_email + '\"' : null }},\n  \"file_path\": \"{{$json.path}}\",\n  \"file_name\": \"{{$json.safeName}}\"\n}"
+      },
+      "id": "InsertRow",
+      "name": "Insert Row (REST)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1560,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Email Trigger (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "Parse Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Meta": {
+      "main": [
+        [
+          {
+            "node": "Lookup Building (REST)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Building (REST)": {
+      "main": [
+        [
+          {
+            "node": "Build Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Path": {
+      "main": [
+        [
+          {
+            "node": "Upload to Storage (POST Binary)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Storage (POST Binary)": {
+      "main": [
+        [
+          {
+            "node": "Insert Row (REST)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "staticData": null,
+  "meta": {
+    "templateCredsSetup": []
+  }
+}

@@ -3,9 +3,16 @@
   "private": true,
   "version": "0.1.0",
   "description": "Malitan (מעליתן) - פלטפורמת ניהול לחברות מעליות",
-  "workspaces": ["apps/*", "packages/*", "automations/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "automations/*"
+  ],
   "scripts": {
     "format": "npx prettier . --write",
     "lint": "echo \"(נוסיף לינט בהמשך)\" && exit 0"
+  },
+  "dependencies": {
+    "pdf-parse": "^1.1.1"
   }
 }
