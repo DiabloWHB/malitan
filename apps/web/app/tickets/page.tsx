@@ -1,459 +1,673 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabaseClient"
-import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { useToast } from "@/components/ui/use-toast"
+import { DashboardLayout } from "@/components/ui/layout/DashboardLayout"
+import { Card, CardHeader, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
+import {
+  Plus,
+  Search,
+  Download,
+  Eye,
+  Edit,
+  Trash2,
+  Clock,
+  MapPin,
+  User,
+  AlertTriangle,
+  CheckCircle,
+  Calendar,
+  FileText,
+  Loader2,
+  X
+} from "lucide-react"
+import Link from "next/link"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Separator } from "@/components/ui/separator"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import PartsIntegration from "@/components/PartsIntegration"
 
-type Building = { id: string; address: string; entrance: string | null }
-type Elevator = { id: string; building_id: string; model: string | null; serial_number: string | null }
 type Ticket = {
   id: string
-  building_id: string
-  elevator_id: string | null
   title: string
-  description: string | null
+  description?: string
   severity: string
   status: string
-  created_at?: string
+  priority?: string
+  created_at: string
+  updated_at: string
+  assigned_to?: string
+  elevator_id?: string
+  building?: {
+    id: string
+    address: string
+    city: string
+    client?: {
+      id: string
+      name: string
+    }
+  }
 }
 
-/** עדכון: מחזיקים תאימות אחורה (file_url/original_name) וגם את הסכמה החדשה (file_path/file_name) */
-type Attachment = {
-  id: string
-  ticket_id: string
-  /** חדש: */
-  file_path: string | null
-  file_name: string | null
-  file_size: number | null
-  file_type: string | null
-  created_at: string | null
-  created_by: string | null
-  /** ישן: */
-  file_url?: string | null
-  original_name?: string | null
+const STATUS_CONFIG = {
+  new: { label: "חדש", variant: "new" as const, icon: FileText, color: "text-purple-600" },
+  assigned: { label: "שויך", variant: "assigned" as const, icon: User, color: "text-blue-600" },
+  in_progress: { label: "בטיפול", variant: "progress" as const, icon: Clock, color: "text-yellow-600" },
+  waiting_parts: { label: "מחכה לחלקים", variant: "waiting" as const, icon: AlertTriangle, color: "text-orange-600" },
+  done: { label: "הושלם", variant: "done" as const, icon: CheckCircle, color: "text-green-600" },
+  cancelled: { label: "בוטל", variant: "cancelled" as const, icon: Trash2, color: "text-gray-600" },
+}
+
+const SEVERITY_CONFIG = {
+  low: { label: "נמוכה", color: "text-gray-600", bgColor: "bg-gray-100 dark:bg-gray-800" },
+  medium: { label: "בינונית", color: "text-blue-600", bgColor: "bg-blue-100 dark:bg-blue-900/30" },
+  high: { label: "גבוהה", color: "text-orange-600", bgColor: "bg-orange-100 dark:bg-orange-900/30" },
+  critical: { label: "קריטית", color: "text-red-600", bgColor: "bg-red-100 dark:bg-red-900/30" },
 }
 
 export default function TicketsPage() {
-  const [loading, setLoading] = useState(false)
-  const [buildings, setBuildings] = useState<Building[]>([])
-  const [elevators, setElevators] = useState<Elevator[]>([])
-  const [rows, setRows] = useState<Ticket[]>([])
-  const [open, setOpen] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState<Partial<Ticket>>({
-    building_id: "" as any,
-    elevator_id: null,
-    title: "",
-    description: "",
-    severity: "medium",
-    status: "new"
-  })
+  const { toast } = useToast()
+  const [loading, setLoading] = useState(true)
+  const [tickets, setTickets] = useState<Ticket[]>([])
+  const [filteredTickets, setFilteredTickets] = useState<Ticket[]>([])
+  const [searchTerm, setSearchTerm] = useState("")
+  const [statusFilter, setStatusFilter] = useState("all")
+  const [severityFilter, setSeverityFilter] = useState("all")
+  const [error, setError] = useState<string | null>(null)
+  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
 
-  // דיאלוג קבצים
-  const [filesOpen, setFilesOpen] = useState(false)
-  const [filesForTicket, setFilesForTicket] = useState<string | null>(null)
-  const [attachments, setAttachments] = useState<Attachment[]>([])
-  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({})
-  const [uploading, setUploading] = useState(false)
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-
-  const bById = useMemo(() => Object.fromEntries(buildings.map(b => [b.id, `${b.address}${b.entrance ? `, כניסה ${b.entrance}` : ""}`])), [buildings])
-  const eById = useMemo(() => Object.fromEntries(elevators.map(e => [e.id, e.model ? `${e.model} (${e.serial_number || "—"})` : `מס׳ ${e.serial_number}`])), [elevators])
-
-  const load = async () => {
+  const loadTickets = async () => {
+    console.log("🔄 Starting to load tickets...")
     setLoading(true)
-    const [bRes, eRes, tRes] = await Promise.all([
-      supabase.from<Building>("buildings").select("id,address,entrance"),
-      supabase.from<Elevator>("elevators").select("id,building_id,model,serial_number"),
-      supabase.from<Ticket>("tickets").select("*").order("created_at", { ascending: false }),
-    ])
-    if (bRes.error) console.error(bRes.error)
-    if (eRes.error) console.error(eRes.error)
-    if (tRes.error) console.error(tRes.error)
-    setBuildings(bRes.data || [])
-    setElevators(eRes.data || [])
-    setRows(tRes.data || [])
-    setLoading(false)
-  }
-
-  useEffect(() => { load() }, [])
-
-  const resetForm = () => {
-    setEditingId(null)
-    setForm({ building_id: "" as any, elevator_id: null, title: "", description: "", severity: "medium", status: "new" })
-  }
-
-  const save = async () => {
-    if (!form.building_id || form.building_id === "none") {
-      alert("יש לבחור בניין")
-      return
-    }
-    if (!form.title) {
-      alert("חובה לתת כותרת לקריאה")
-      return
-    }
-    setLoading(true)
-    const payload = {
-      building_id: form.building_id!,
-      elevator_id: form.elevator_id || null,
-      title: form.title!,
-      description: form.description || null,
-      severity: form.severity || "medium",
-      status: form.status || "new"
-    }
-    if (editingId) {
-      const { error } = await supabase.from("tickets").update(payload).eq("id", editingId)
-      if (error) alert("שגיאה בעדכון: " + error.message)
-    } else {
-      const { error } = await supabase.from("tickets").insert([payload])
-      if (error) alert("שגיאה בהוספה: " + error.message)
-    }
-    setOpen(false)
-    resetForm()
-    await load()
-    setLoading(false)
-  }
-
-  const editRow = (r: Ticket) => {
-    setEditingId(r.id)
-    setForm({ ...r })
-    setOpen(true)
-  }
-
-  const deleteRow = async (id: string) => {
-    if (!confirm("למחוק את הקריאה?")) return
-    setLoading(true)
-    const { error } = await supabase.from("tickets").delete().eq("id", id)
-    if (error) alert("שגיאה במחיקה: " + error.message)
-    await load()
-    setLoading(false)
-  }
-
-  // --- קבצים לקריאה ---
-
-  const getCompanyId = async (): Promise<string> => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) throw new Error("Not authenticated")
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("company_id")
-      .eq("id", user.id)
-      .single()
-    if (error || !data?.company_id) throw new Error("No company_id for user")
-    return data.company_id as string
-  }
-
-  const openFilesDialog = async (ticketId: string) => {
-    setFilesForTicket(ticketId)
-    setFilesOpen(true)
-    await loadAttachments(ticketId)
-  }
-
-  const loadAttachments = async (ticketId: string) => {
-    // שואבים גם את השדות הישנים וגם את החדשים
-    const { data, error } = await supabase
-      .from<Attachment>("attachments")
-      .select("id,ticket_id,file_path,file_name,file_type,file_size,created_at,created_by,file_url,original_name")
-      .eq("ticket_id", ticketId)
-      .order("created_at", { ascending: false })
-    if (error) {
-      console.error(error)
-      setAttachments([])
-      setSignedUrls({})
-      return
-    }
-    setAttachments(data || [])
-
-    // צור Signed URLs עבור רשומות עם file_path (Bucket פרטי)
-    const map: Record<string, string> = {}
-    for (const r of data || []) {
-      if (r.file_path) {
-        const { data: urlData } = await supabase
-          .storage
-          .from("attachments")
-          .createSignedUrl(r.file_path, 60 * 60) // שעה
-        if (urlData?.signedUrl) {
-          map[r.id] = urlData.signedUrl
-        }
-      }
-    }
-    setSignedUrls(map)
-  }
-
-  const detectFileType = (fileName: string): "image" | "pdf" | "other" => {
-    const lower = fileName.toLowerCase()
-    if (/\.(png|jpg|jpeg|gif|webp|heic|heif)$/.test(lower)) return "image"
-    if (lower.endsWith(".pdf")) return "pdf"
-    return "other"
-  }
-
-  // ניקוי שם הקובץ – החלפת רווחים/עברית/סימנים ל-ASCII בטוח
-  const sanitize = (name: string) => {
-    const parts = name.split(".")
-    const ext = parts.length > 1 ? "." + parts.pop() : ""
-    const base = parts.join(".")
-    const safeBase = base.normalize("NFKD").replace(/[^\w.-]+/g, "_")
-    return (safeBase || "file") + ext.toLowerCase()
-  }
-
-  const uploadFile = async () => {
-    if (!selectedFile || !filesForTicket) return
-    setUploading(true)
+    setError(null)
+    
     try {
-      const companyId = await getCompanyId()
-      const safeName = sanitize(selectedFile.name)
-      const storagePath = `company/${companyId}/tickets/${filesForTicket}/${Date.now()}__${safeName}`
+      // בדיקה בסיסית של החיבור
+      console.log("📡 Testing Supabase connection...")
+      const { data: testData, error: testError } = await supabase
+        .from("tickets")
+        .select("count", { count: "exact", head: true })
 
-      // העלאה ל-Storage (bucket: attachments) - פרטי
-      const { error: upErr } = await supabase.storage.from("attachments").upload(storagePath, selectedFile, {
-        cacheControl: "3600",
-        upsert: false,
+      if (testError) {
+        console.error("❌ Supabase connection error:", testError)
+        throw testError
+      }
+
+      console.log("✅ Supabase connection successful, count:", testData)
+
+      // טעינת הנתונים המלאים
+      console.log("📥 Loading full ticket data...")
+      const { data, error } = await supabase
+        .from("tickets")
+        .select(`
+          *,
+          building:buildings(id, address, city, client:clients(id, name))
+        `)
+        .order("created_at", { ascending: false })
+
+      if (error) {
+        console.error("❌ Error loading tickets:", error)
+        throw error
+      }
+
+      console.log("✅ Tickets loaded successfully:", data?.length || 0, "tickets")
+      console.log("📊 Sample data:", data?.[0])
+
+      setTickets(data || [])
+      setFilteredTickets(data || [])
+
+    } catch (err: any) {
+      console.error("💥 Load tickets error:", err)
+      setError(err.message)
+      
+      toast({
+        title: "שגיאה בטעינת קריאות",
+        description: err.message,
+        variant: "destructive"
       })
-      if (upErr) throw upErr
-
-      // הוספת רשומה ב-DB (שדות חדשים; נשמור גם original_name לתאימות)
-      const { data: u } = await supabase.auth.getUser()
-      const fileType = detectFileType(selectedFile.name)
-      const { error: insErr } = await supabase.from("attachments").insert([{
-        ticket_id: filesForTicket,
-        company_id: companyId,
-        file_name: selectedFile.name,
-        file_path: storagePath,
-        file_size: selectedFile.size,
-        file_type: fileType,
-        created_by: u?.user?.id ?? null,
-        original_name: selectedFile.name  // לשמירת תאימות להצגות ישנות
-      }])
-      if (insErr) throw insErr
-
-      setSelectedFile(null)
-      await loadAttachments(filesForTicket)
-      alert("העלאה הושלמה")
-    } catch (e: any) {
-      alert("שגיאה בהעלאה: " + (e?.message || e))
     } finally {
-      setUploading(false)
+      setLoading(false)
     }
   }
 
-  const deleteAttachment = async (att: Attachment) => {
-    if (!confirm("למחוק את הקובץ מהרשימה?")) return
+  // Filter tickets
+  useEffect(() => {
+    let filtered = tickets
 
-    // מחיקת הרשומה (מחיקת אובייקט מה-Storage מותרת רק ל-admin במדיניות; כאן נשאיר מחיקה לוגית מה-DB)
-    const { error } = await supabase.from("attachments").delete().eq("id", att.id)
-    if (error) {
-      alert("שגיאה במחיקת הרשומה: " + error.message)
-      return
+    if (searchTerm) {
+      filtered = filtered.filter(ticket =>
+        ticket.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        ticket.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        ticket.building?.address.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        ticket.building?.client?.name.toLowerCase().includes(searchTerm.toLowerCase())
+      )
     }
-    if (filesForTicket) await loadAttachments(filesForTicket)
+
+    if (statusFilter !== "all") {
+      filtered = filtered.filter(ticket => ticket.status === statusFilter)
+    }
+
+    if (severityFilter !== "all") {
+      filtered = filtered.filter(ticket => ticket.severity === severityFilter)
+    }
+
+    setFilteredTickets(filtered)
+    console.log("🔍 Filtered tickets:", filtered.length, "out of", tickets.length)
+  }, [tickets, searchTerm, statusFilter, severityFilter])
+
+  useEffect(() => {
+    loadTickets()
+  }, [])
+
+  const getStatusStats = () => {
+    const stats = {
+      total: tickets.length,
+      new: tickets.filter(t => t.status === 'new').length,
+      assigned: tickets.filter(t => t.status === 'assigned').length,
+      in_progress: tickets.filter(t => t.status === 'in_progress').length,
+      waiting_parts: tickets.filter(t => t.status === 'waiting_parts').length,
+      done: tickets.filter(t => t.status === 'done').length,
+      cancelled: tickets.filter(t => t.status === 'cancelled').length,
+      critical: tickets.filter(t => t.severity === 'critical' && t.status !== 'done' && t.status !== 'cancelled').length
+    }
+    return stats
   }
 
-  const urlForAttachment = (a: Attachment): string | undefined => {
-    // אם יש Signed URL (file_path) – עדיף
-    if (a.file_path && signedUrls[a.id]) return signedUrls[a.id]
-    // תאימות לרשומות ישנות עם file_url ציבורי
-    if (a.file_url) return a.file_url
-    return undefined
+  // פונקציה לפתיחת Dialog
+  const handleTicketClick = (ticket: Ticket) => {
+    console.log("🎯 Opening ticket:", ticket.id)
+    setSelectedTicket(ticket)
+    setDialogOpen(true)
+  }
+
+  // פונקציה לשינוי סטטוס
+  const handleStatusChange = async (ticketId: string, newStatus: string) => {
+    try {
+      console.log("📝 Updating status:", ticketId, "to", newStatus)
+
+      const { error } = await supabase
+        .from('tickets')
+        .update({ status: newStatus })
+        .eq('id', ticketId)
+
+      if (error) throw error
+
+      // עדכון ה-state המקומי
+      setTickets(tickets.map(t =>
+        t.id === ticketId ? { ...t, status: newStatus } : t
+      ))
+
+      if (selectedTicket && selectedTicket.id === ticketId) {
+        setSelectedTicket({ ...selectedTicket, status: newStatus })
+      }
+
+      toast({
+        title: "הסטטוס עודכן בהצלחה",
+        description: `הקריאה עודכנה ל-${STATUS_CONFIG[newStatus as keyof typeof STATUS_CONFIG]?.label || newStatus}`
+      })
+    } catch (err: any) {
+      console.error("❌ Error updating status:", err)
+      toast({
+        title: "שגיאה בעדכון סטטוס",
+        description: err.message,
+        variant: "destructive"
+      })
+    }
+  }
+
+  const stats = getStatusStats()
+
+  // יצירת קריאה לדוגמא (למטרות testing)
+  const createSampleTicket = async () => {
+    try {
+      const sampleTicket = {
+        title: "מעלית תקועה - בדיקה",
+        description: "קריאה לדוגמא לבדיקת המערכת",
+        severity: "high",
+        status: "new",
+        priority: "high"
+      }
+
+      const { data, error } = await supabase
+        .from("tickets")
+        .insert([sampleTicket])
+        .select()
+
+      if (error) throw error
+
+      console.log("✅ Sample ticket created:", data)
+      toast({
+        title: "קריאה נוצרה בהצלחה",
+        description: "קריאת דוגמא נוצרה לבדיקה"
+      })
+      
+      // רענון הנתונים
+      loadTickets()
+    } catch (err: any) {
+      console.error("❌ Error creating sample ticket:", err)
+      toast({
+        title: "שגיאה ביצירת קריאה",
+        description: err.message,
+        variant: "destructive"
+      })
+    }
+  }
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <Loader2 className="h-12 w-12 animate-spin mx-auto text-primary-600" />
+            <p className="mt-4 text-gray-600 dark:text-gray-400">טוען קריאות...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    )
+  }
+
+  if (error) {
+    return (
+      <DashboardLayout>
+        <div className="p-6">
+          <Card className="border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20">
+            <CardContent className="p-8 text-center">
+              <AlertTriangle className="h-16 w-16 mx-auto mb-4 text-red-500" />
+              <h3 className="text-lg font-semibold text-red-800 dark:text-red-200 mb-2">
+                שגיאה בטעינת נתונים
+              </h3>
+              <p className="text-red-700 dark:text-red-300 mb-4">
+                {error}
+              </p>
+              <div className="flex gap-3 justify-center">
+                <Button onClick={loadTickets}>
+                  נסה שוב
+                </Button>
+                <Button variant="secondary" onClick={createSampleTicket}>
+                  צור קריאת דוגמא
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardLayout>
+    )
   }
 
   return (
-    <main className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-2xl font-semibold">קריאות שירות</h2>
-
-        <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) resetForm() }}>
-          <DialogTrigger asChild>
-            <Button onClick={() => setOpen(true)}>קריאה חדשה</Button>
-          </DialogTrigger>
-          <DialogContent dir="rtl">
-            <DialogHeader>
-              <DialogTitle>{editingId ? "עריכת קריאה" : "קריאה חדשה"}</DialogTitle>
-            </DialogHeader>
-
-            <div className="space-y-3">
-              <div>
-                <Label>בניין *</Label>
-                <Select
-                  value={(form.building_id as string) || "none"}
-                  onValueChange={(val) => setForm({ ...form, building_id: val === "none" ? ("" as any) : val })}
-                >
-                  <SelectTrigger><SelectValue placeholder="בחר בניין" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none" disabled>— בחר —</SelectItem>
-                    {buildings.map(b => (
-                      <SelectItem key={b.id} value={b.id}>
-                        {bById[b.id]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>מעלית (אופציונלי)</Label>
-                <Select
-                  value={form.elevator_id || "none"}
-                  onValueChange={(val) => setForm({ ...form, elevator_id: val === "none" ? null : val })}
-                >
-                  <SelectTrigger><SelectValue placeholder="בחר מעלית" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">— ללא —</SelectItem>
-                    {elevators
-                      .filter(e => e.building_id === form.building_id)
-                      .map(e => (
-                        <SelectItem key={e.id} value={e.id}>
-                          {eById[e.id]}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>כותרת *</Label>
-                <Input value={form.title || ""} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-              </div>
-
-              <div>
-                <Label>תיאור</Label>
-                <Textarea value={form.description || ""} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>חומרה</Label>
-                  <Select value={form.severity || "medium"} onValueChange={(val) => setForm({ ...form, severity: val })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="low">נמוכה</SelectItem>
-                      <SelectItem value="medium">בינונית</SelectItem>
-                      <SelectItem value="high">גבוהה</SelectItem>
-                      <SelectItem value="critical">קריטית</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>סטטוס</Label>
-                  <Select value={form.status || "new"} onValueChange={(val) => setForm({ ...form, status: val })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="new">חדש</SelectItem>
-                      <SelectItem value="assigned">שויך</SelectItem>
-                      <SelectItem value="in_progress">בטיפול</SelectItem>
-                      <SelectItem value="waiting_parts">מחכה לחלקים</SelectItem>
-                      <SelectItem value="done">הסתיים</SelectItem>
-                      <SelectItem value="cancelled">בוטל</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="pt-2 flex gap-2 justify-end">
-                <Button variant="outline" onClick={() => { setOpen(false); resetForm() }}>ביטול</Button>
-                <Button onClick={save} disabled={loading}>{editingId ? "שמור" : "צור קריאה"}</Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+    <DashboardLayout>
+      {/* Page Header */}
+      <div className="bg-white border-b border-gray-200 px-6 py-6 dark:bg-slate-900 dark:border-slate-700">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">קריאות שירות</h1>
+            <p className="text-gray-600 dark:text-gray-400 mt-1">
+              ניהול וטיפול בקריאות שירות • {stats.total} קריאות סה"כ
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <Button onClick={createSampleTicket} className="flex items-center gap-2">
+              <Plus className="w-4 h-4" />
+              קריאה חדשה
+            </Button>
+            <Button variant="secondary" className="flex items-center gap-2">
+              <Download className="w-4 h-4" />
+              ייצוא נתונים
+            </Button>
+          </div>
+        </div>
       </div>
 
-      {loading && <p className="text-zinc-500 mb-2">טוען…</p>}
+      <div className="p-6">
+        {/* Debug Info */}
+        <Card className="mb-6 border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20">
+          <CardContent className="p-4">
+            <p className="text-blue-800 dark:text-blue-200 text-sm">
+              🔍 Debug: {tickets.length} קריאות נטענו, {filteredTickets.length} מוצגות לאחר סינון
+            </p>
+          </CardContent>
+        </Card>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-right border border-zinc-200 rounded-lg overflow-hidden">
-          <thead className="bg-zinc-50">
-            <tr>
-              <th className="p-2 border-b">בניין</th>
-              <th className="p-2 border-b">מעלית</th>
-              <th className="p-2 border-b">כותרת</th>
-              <th className="p-2 border-b">חומרה</th>
-              <th className="p-2 border-b">סטטוס</th>
-              <th className="p-2 border-b w-56">פעולות</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr><td colSpan={6} className="p-3 text-zinc-500">אין קריאות עדיין.</td></tr>
-            ) : rows.map(r => (
-              <tr key={r.id} className="hover:bg-zinc-50">
-                <td className="p-2 border-b">{bById[r.building_id] || "—"}</td>
-                <td className="p-2 border-b">{r.elevator_id ? eById[r.elevator_id] : "—"}</td>
-                <td className="p-2 border-b">{r.title}</td>
-                <td className="p-2 border-b">{r.severity}</td>
-                <td className="p-2 border-b">{r.status}</td>
-                <td className="p-2 border-b">
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="secondary" size="sm" onClick={() => openFilesDialog(r.id)}>קבצים</Button>
-                    <Button variant="outline" size="sm" onClick={() => editRow(r)}>עריכה</Button>
-                    <Button variant="destructive" size="sm" onClick={() => deleteRow(r.id)}>מחיקה</Button>
+        {/* Stats Overview */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-8">
+          <Card 
+            className="p-4 text-center hover-lift cursor-pointer transition-all duration-200" 
+            onClick={() => {
+              setStatusFilter("all")
+              setSeverityFilter("all")
+            }}
+          >
+            <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.total}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">סה"כ</div>
+          </Card>
+
+          <Card className="p-4 text-center hover-lift cursor-pointer transition-all duration-200" onClick={() => setStatusFilter("new")}>
+            <div className="text-2xl font-bold text-purple-600">{stats.new}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">חדשות</div>
+          </Card>
+
+          <Card className="p-4 text-center hover-lift cursor-pointer transition-all duration-200" onClick={() => setStatusFilter("assigned")}>
+            <div className="text-2xl font-bold text-blue-600">{stats.assigned}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">משויכות</div>
+          </Card>
+
+          <Card className="p-4 text-center hover-lift cursor-pointer transition-all duration-200" onClick={() => setStatusFilter("in_progress")}>
+            <div className="text-2xl font-bold text-yellow-600">{stats.in_progress}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">בטיפול</div>
+          </Card>
+
+          <Card className="p-4 text-center hover-lift cursor-pointer transition-all duration-200" onClick={() => setStatusFilter("waiting_parts")}>
+            <div className="text-2xl font-bold text-orange-600">{stats.waiting_parts}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">מחכות</div>
+          </Card>
+
+          <Card className="p-4 text-center hover-lift cursor-pointer transition-all duration-200" onClick={() => setStatusFilter("done")}>
+            <div className="text-2xl font-bold text-green-600">{stats.done}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">הושלמו</div>
+          </Card>
+
+          <Card 
+            className="p-4 text-center hover-lift cursor-pointer border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 transition-all duration-200" 
+            onClick={() => {
+              setSeverityFilter("critical")
+              setStatusFilter("all")
+            }}
+          >
+            <div className="text-2xl font-bold text-red-600">{stats.critical}</div>
+            <div className="text-sm text-red-600 dark:text-red-400">קריטיות</div>
+          </Card>
+        </div>
+
+        {/* Tickets List */}
+        {filteredTickets.length === 0 ? (
+          <Card>
+            <CardContent className="p-12 text-center">
+              <FileText className="h-16 w-16 mx-auto mb-4 text-gray-300 dark:text-gray-600" />
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
+                {searchTerm || statusFilter !== "all" || severityFilter !== "all" 
+                  ? "לא נמצאו קריאות" 
+                  : "אין קריאות עדיין"
+                }
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400 mb-4">
+                {searchTerm || statusFilter !== "all" || severityFilter !== "all"
+                  ? "נסה להתאים את המסננים או החיפוש"
+                  : "התחל ביצירת קריאת שירות ראשונה"
+                }
+              </p>
+              <Button onClick={createSampleTicket}>
+                <Plus className="w-4 h-4 ml-2" />
+                צור קריאה ראשונה
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-4">
+            {filteredTickets.map((ticket, index) => {
+              const statusConfig = STATUS_CONFIG[ticket.status as keyof typeof STATUS_CONFIG]
+              const severityConfig = SEVERITY_CONFIG[ticket.severity as keyof typeof SEVERITY_CONFIG]
+              const StatusIcon = statusConfig?.icon || FileText
+
+              return (
+                <Card 
+                  key={ticket.id} 
+                  hover 
+                  className="animate-in transition-all duration-200 cursor-pointer"
+                  style={{ animationDelay: `${index * 50}ms` }}
+                  onClick={() => handleTicketClick(ticket)}
+                >
+                  <CardContent className="p-6">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        {/* Header */}
+                        <div className="flex items-center flex-wrap gap-3 mb-3">
+                          <Badge variant={statusConfig?.variant || "new"}>
+                            <StatusIcon className="w-3 h-3 ml-1" />
+                            {statusConfig?.label || ticket.status}
+                          </Badge>
+                          
+                          <span className={`
+                            px-3 py-1 rounded-full text-xs font-medium border
+                            ${severityConfig?.bgColor || "bg-gray-100 dark:bg-gray-800"} 
+                            ${severityConfig?.color || "text-gray-600"}
+                            border-current border-opacity-20
+                          `}>
+                            {severityConfig?.label || ticket.severity}
+                          </span>
+
+                          <span className="text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-mono">
+                            #{ticket.id.slice(0, 8)}
+                          </span>
+                        </div>
+
+                        {/* Title */}
+                        <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-2 text-lg leading-tight">
+                          {ticket.title}
+                        </h3>
+
+                        {/* Description */}
+                        {ticket.description && (
+                          <p className="text-gray-600 dark:text-gray-400 mb-3 line-clamp-2 leading-relaxed">
+                            {ticket.description}
+                          </p>
+                        )}
+
+                        {/* Meta info */}
+                        <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+                          {ticket.building && (
+                            <span className="flex items-center gap-1">
+                              <MapPin className="w-4 h-4 flex-shrink-0" />
+                              <span className="truncate">{ticket.building.address}, {ticket.building.city}</span>
+                            </span>
+                          )}
+                          
+                          {ticket.building?.client && (
+                            <span className="flex items-center gap-1">
+                              <User className="w-4 h-4 flex-shrink-0" />
+                              <span className="truncate">{ticket.building.client.name}</span>
+                            </span>
+                          )}
+
+                          <span className="flex items-center gap-1">
+                            <Calendar className="w-4 h-4 flex-shrink-0" />
+                            נוצר {new Date(ticket.created_at).toLocaleDateString('he-IL')}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex flex-col gap-2 flex-shrink-0">
+                        <Button 
+                          size="sm" 
+                          variant="ghost"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleTicketClick(ticket)
+                          }}
+                        >
+                          <Eye className="w-4 h-4 ml-1" />
+                          צפה
+                        </Button>
+                        <Button size="sm" variant="ghost">
+                          <Edit className="w-4 h-4 ml-1" />
+                          ערוך
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Dialog לפרטי הקריאה */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          {selectedTicket && (
+            <>
+              <DialogHeader>
+                <div className="flex items-start justify-between gap-4 mb-2">
+                  <div className="flex-1">
+                    <DialogTitle className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-3">
+                      {selectedTicket.title}
+                    </DialogTitle>
+                    <DialogDescription className="flex items-center gap-2 text-base text-gray-600 dark:text-gray-400">
+                      <MapPin className="h-4 w-4" />
+                      {selectedTicket.building?.address}, {selectedTicket.building?.city}
+                    </DialogDescription>
                   </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
 
-      <Dialog open={filesOpen} onOpenChange={(o) => { setFilesOpen(o); if (!o) { setFilesForTicket(null); setAttachments([]); setSelectedFile(null); setSignedUrls({}) } }}>
-        <DialogContent dir="rtl">
-          <DialogHeader>
-            <DialogTitle>קבצים לקריאה</DialogTitle>
-          </DialogHeader>
+                  {/* Status Badge */}
+                  <Badge variant={STATUS_CONFIG[selectedTicket.status as keyof typeof STATUS_CONFIG]?.variant || "new"}>
+                    {STATUS_CONFIG[selectedTicket.status as keyof typeof STATUS_CONFIG]?.label || selectedTicket.status}
+                  </Badge>
+                </div>
+              </DialogHeader>
 
-          {!filesForTicket ? (
-            <p className="text-zinc-500">לא נבחרה קריאה.</p>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
-                <Input type="file" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} accept="image/*,.pdf,video/mp4" />
-                <Button onClick={uploadFile} disabled={uploading || !selectedFile}>העלה</Button>
+              <Separator className="my-4" />
+
+              {/* Details Grid */}
+              <div className="space-y-6">
+                {/* Priority & Status Row */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2 block">
+                      חומרה
+                    </label>
+                    <span className={`
+                      inline-flex px-3 py-1.5 rounded-lg text-sm font-medium border
+                      ${SEVERITY_CONFIG[selectedTicket.severity as keyof typeof SEVERITY_CONFIG]?.bgColor || "bg-gray-100 dark:bg-gray-800"}
+                      ${SEVERITY_CONFIG[selectedTicket.severity as keyof typeof SEVERITY_CONFIG]?.color || "text-gray-600"}
+                      border-current border-opacity-20
+                    `}>
+                      {SEVERITY_CONFIG[selectedTicket.severity as keyof typeof SEVERITY_CONFIG]?.label || selectedTicket.severity}
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2 block">
+                      שינוי סטטוס
+                    </label>
+                    <Select
+                      value={selectedTicket.status}
+                      onValueChange={(value) => handleStatusChange(selectedTicket.id, value)}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+                          <SelectItem key={key} value={key}>
+                            {config.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Description */}
+                {selectedTicket.description && (
+                  <div>
+                    <label className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2 flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      תיאור התקלה
+                    </label>
+                    <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+                      <p className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap leading-relaxed">
+                        {selectedTicket.description}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Building & Client Info */}
+                <div className="grid grid-cols-2 gap-4">
+                  {selectedTicket.building?.client && (
+                    <div>
+                      <label className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2 flex items-center gap-2">
+                        <User className="h-4 w-4" />
+                        לקוח
+                      </label>
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {selectedTicket.building.client.name}
+                      </p>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2 flex items-center gap-2">
+                      <Calendar className="h-4 w-4" />
+                      תאריך פתיחה
+                    </label>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      {new Date(selectedTicket.created_at).toLocaleString('he-IL')}
+                    </p>
+                  </div>
+                </div>
+
+                {/* ID */}
+                <div>
+                  <label className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2 block">
+                    מזהה קריאה
+                  </label>
+                  <code className="text-xs bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded font-mono text-gray-700 dark:text-gray-300">
+                    {selectedTicket.id}
+                  </code>
+                </div>
+
+                <Separator className="my-6" />
+
+                {/* Parts Integration */}
+                <PartsIntegration
+                  ticketId={selectedTicket.id}
+                  elevatorId={selectedTicket.elevator_id}
+                  onPartsChanged={() => loadTickets()}
+                />
+
+                <Separator className="my-6" />
+
+                {/* Actions */}
+                <div className="flex gap-3 justify-end pt-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => setDialogOpen(false)}
+                  >
+                    סגור
+                  </Button>
+                  <Button variant="secondary">
+                    <Edit className="w-4 h-4 ml-2" />
+                    ערוך
+                  </Button>
+                  <Button>
+                    <Plus className="w-4 h-4 ml-2" />
+                    הוסף קובץ
+                  </Button>
+                </div>
               </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-right border border-zinc-200 rounded-lg overflow-hidden">
-                  <thead className="bg-zinc-50">
-                    <tr>
-                      <th className="p-2 border-b">שם קובץ</th>
-                      <th className="p-2 border-b">סוג</th>
-                      <th className="p-2 border-b">קישור</th>
-                      <th className="p-2 border-b w-28">פעולות</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {attachments.length === 0 ? (
-                      <tr><td colSpan={4} className="p-3 text-zinc-500">אין קבצים לקריאה זו.</td></tr>
-                    ) : attachments.map(a => {
-                      const name = a.file_name || a.original_name || "(ללא שם)"
-                      const href = urlForAttachment(a)
-                      return (
-                        <tr key={a.id} className="hover:bg-zinc-50">
-                          <td className="p-2 border-b">{name}</td>
-                          <td className="p-2 border-b">{a.file_type || "—"}</td>
-                          <td className="p-2 border-b">
-                            {href ? (
-                              <a className="text-blue-600 underline" href={href} target="_blank" rel="noreferrer">פתח</a>
-                            ) : (
-                              <span className="text-zinc-500">—</span>
-                            )}
-                          </td>
-                          <td className="p-2 border-b">
-                            <Button variant="destructive" size="sm" onClick={() => deleteAttachment(a)}>מחיקה</Button>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            </>
           )}
         </DialogContent>
       </Dialog>
-    </main>
+
+    </DashboardLayout>
   )
 }
