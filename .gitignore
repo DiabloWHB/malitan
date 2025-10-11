@@ -28,3 +28,6 @@ ios/
 
 # Supabase functions (build artifacts בהמשך)
 functions/.output/
+
+# Ignore large files and folders outside apps/
+automations/
