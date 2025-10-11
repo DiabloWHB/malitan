@@ -1,0 +1,41 @@
+# Node / general
+node_modules/
+dist/
+build/
+.tmp/
+.temp/
+.DS_Store
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Next.js / Expo
+.next/
+.expo/
+.expo-shared/
+web-build/
+android/
+ios/
+
+# Supabase functions (build artifacts בהמשך)
+functions/.output/
+# Ignore everything in the root
+/*
+
+# But don't ignore the apps directory
+!/apps/
+
+# Don't ignore .gitignore itself
+!.gitignore
+
+# Optional: Don't ignore README if you have one
+!README.md
