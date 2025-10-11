@@ -1,42 +1,43 @@
-import { ReactNode } from 'react'
+import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
+import { cn } from "@/lib/utils"
 
-interface BadgeProps {
-  children: ReactNode
-  variant?: 'new' | 'assigned' | 'progress' | 'waiting' | 'done' | 'cancelled' | 'outline' | 'secondary' | 'destructive'
-  size?: 'sm' | 'md'
-  className?: string
-}
-
-export function Badge({
-  children,
-  variant = 'new',
-  size = 'md',
-  className = ''
-}: BadgeProps) {
-  const baseClasses = 'inline-flex items-center font-medium rounded-full border'
-
-  const sizeClasses = {
-    sm: 'px-2 py-0.5 text-xs',
-    md: 'px-2.5 py-1 text-sm'
+const badgeVariants = cva(
+  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  {
+    variants: {
+      variant: {
+        default:
+          "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
+        secondary:
+          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        destructive:
+          "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
+        outline: "text-foreground",
+        
+        // Status variants for Tickets
+        new: "border-transparent bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+        assigned: "border-transparent bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+        progress: "border-transparent bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+        waiting: "border-transparent bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+        done: "border-transparent bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+        cancelled: "border-transparent bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
   }
+)
 
-  const variantClasses = {
-    new: 'status-new',
-    assigned: 'status-assigned',
-    progress: 'status-progress',
-    waiting: 'status-waiting',
-    done: 'status-done',
-    cancelled: 'status-cancelled',
-    outline: 'bg-white border-gray-300 text-gray-700',
-    secondary: 'bg-gray-100 border-gray-200 text-gray-800',
-    destructive: 'bg-red-100 border-red-200 text-red-800'
-  }
+export interface BadgeProps
+  extends React.HTMLAttributes<HTMLDivElement>,
+    VariantProps<typeof badgeVariants> {}
 
+function Badge({ className, variant, ...props }: BadgeProps) {
   return (
-    <span 
-      className={`${baseClasses} ${sizeClasses[size]} ${variantClasses[variant]} ${className}`}
-    >
-      {children}
-    </span>
+    <div className={cn(badgeVariants({ variant }), className)} {...props} />
   )
 }
+
+export { Badge, badgeVariants }

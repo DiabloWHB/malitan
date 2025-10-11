@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { supabase } from "@/lib/supabaseClient"
 import { DashboardLayout } from "@/components/ui/layout/DashboardLayout"
 import { Label } from "@/components/ui/label"
@@ -35,14 +37,15 @@ import {
   AlertTriangle,
   Paperclip,
   Briefcase,
-  Key
+  Key,
+  ExternalLink
 } from "lucide-react"
 
 type Client = {
   id: string
   name: string
-  email: string | null
-  phone: string | null
+  contact_email: string | null
+  contact_phone: string | null
 }
 
 type Building = {
@@ -84,9 +87,10 @@ type Ticket = {
 type InspectorReport = {
   id: string
   report_date: string
-  items_section_7: any[]
-  items_section_9: any[]
   inspector_name: string | null
+  next_inspection_date: string | null
+  file_name: string | null
+  elevator_id: string | null
 }
 
 type Attachment = {
@@ -114,7 +118,7 @@ const COMMON_STREETS = [
 // קונפיג סטטוס
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   new: { label: "חדש", color: "bg-purple-500" },
-  assigned: { label: "שויך", color: "bg-blue-500" },
+  assigned: { label: "שוייך", color: "bg-blue-500" },
   in_progress: { label: "בטיפול", color: "bg-yellow-500" },
   waiting_parts: { label: "מחכה לחלקים", color: "bg-orange-500" },
   done: { label: "הושלם", color: "bg-green-500" },
@@ -129,6 +133,7 @@ const SEVERITY_CONFIG: Record<string, { label: string; color: string }> = {
 }
 
 export default function BuildingsPage() {
+  const router = useRouter()
   const { toast } = useToast()
   const [loading, setLoading] = useState(false)
   const [clients, setClients] = useState<Client[]>([])
@@ -219,25 +224,43 @@ export default function BuildingsPage() {
   const load = async () => {
     setLoading(true)
     try {
-      // טען לקוחות
+      // טען לקוחות - תיקון שמות העמודות!
       const { data: clientsData, error: cError } = await supabase
         .from("clients")
-        .select("id, name, email, phone")
+        .select("id, name, contact_email, contact_phone")
         .order("name", { ascending: true })
 
       if (cError) throw cError
       setClients(clientsData || [])
 
-      // טען בניינים
+      // טען בניינים - הוספת כל השדות החדשים!
       const { data: buildingsData, error: bError } = await supabase
         .from("buildings")
-        .select("id, client_id, address, street, house_number, city, entrance, notes")
+        .select(`
+          id, 
+          client_id, 
+          address, 
+          street, 
+          house_number, 
+          city, 
+          entrance, 
+          notes,
+          floors,
+          apartments,
+          build_year,
+          building_type,
+          access_code,
+          key_location,
+          parking_available,
+          parking_info
+        `)
         .order("city", { ascending: true })
 
       if (bError) throw bError
       setRows(buildingsData || [])
 
     } catch (err: any) {
+      console.error("Load error:", err)
       toast({
         title: "שגיאה בטעינה",
         description: err.message,
@@ -347,6 +370,7 @@ export default function BuildingsPage() {
       await load()
 
     } catch (err: any) {
+      console.error("Save error:", err)
       toast({
         title: "שגיאה",
         description: err.message,
@@ -406,10 +430,10 @@ export default function BuildingsPage() {
       if (tError) throw tError
       setBuildingTickets(ticketsData || [])
 
-      // טען דוחות בודק
+      // טען דוחות בודק - תיקון שדות!
       const { data: reportsData, error: rError } = await supabase
         .from('inspector_reports')
-        .select('id, report_date, items_section_7, items_section_9, inspector_name')
+        .select('id, report_date, inspector_name, next_inspection_date, file_name, elevator_id')
         .eq('building_id', building.id)
         .order('report_date', { ascending: false })
         .limit(10)
@@ -480,7 +504,7 @@ export default function BuildingsPage() {
               </Button>
             </DialogTrigger>
 
-            <DialogContent dir="rtl" className="max-w-2xl">
+            <DialogContent dir="rtl" className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>{editingId ? "עריכת בניין" : "בניין חדש"}</DialogTitle>
               </DialogHeader>
@@ -569,7 +593,7 @@ export default function BuildingsPage() {
                     id="entrance"
                     value={form.entrance || ""}
                     onChange={(e) => setForm({ ...form, entrance: e.target.value })}
-                    placeholder="א׳, ב׳, ג׳..."
+                    placeholder="א', ב', ג'..."
                   />
                 </div>
 
@@ -603,7 +627,7 @@ export default function BuildingsPage() {
                         min="1"
                         value={form.floors || ""}
                         onChange={(e) => setForm({ ...form, floors: e.target.value ? parseInt(e.target.value) : undefined })}
-                        placeholder="לדוגמה: 8"
+                        placeholder="לדוגמא: 8"
                       />
                     </div>
 
@@ -616,7 +640,7 @@ export default function BuildingsPage() {
                         min="1"
                         value={form.apartments || ""}
                         onChange={(e) => setForm({ ...form, apartments: e.target.value ? parseInt(e.target.value) : undefined })}
-                        placeholder="לדוגמה: 24"
+                        placeholder="לדוגמא: 24"
                       />
                     </div>
 
@@ -630,7 +654,7 @@ export default function BuildingsPage() {
                         max={new Date().getFullYear()}
                         value={form.build_year || ""}
                         onChange={(e) => setForm({ ...form, build_year: e.target.value ? parseInt(e.target.value) : undefined })}
-                        placeholder="לדוגמה: 1985"
+                        placeholder="לדוגמא: 1985"
                       />
                     </div>
 
@@ -642,7 +666,7 @@ export default function BuildingsPage() {
                         onValueChange={(value) => setForm({ ...form, building_type: value })}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="בחר סוג בניין" />
+                          <SelectValue placeholder="בחר סוג בניין (אופציונלי)" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="residential">מגורים</SelectItem>
@@ -673,7 +697,7 @@ export default function BuildingsPage() {
                         id="access_code"
                         value={form.access_code || ""}
                         onChange={(e) => setForm({ ...form, access_code: e.target.value })}
-                        placeholder="לדוגמה: 1234#"
+                        placeholder="לדוגמא: 1234#"
                         dir="ltr"
                       />
                     </div>
@@ -685,7 +709,7 @@ export default function BuildingsPage() {
                         id="key_location"
                         value={form.key_location || ""}
                         onChange={(e) => setForm({ ...form, key_location: e.target.value })}
-                        placeholder="לדוגמה: אצל דייר בקומה 1"
+                        placeholder="לדוגמא: אצל דייר בקומה 1"
                       />
                     </div>
                   </div>
@@ -922,6 +946,16 @@ export default function BuildingsPage() {
             const activeTickets = buildingTickets.filter(t => 
               t.status !== 'done' && t.status !== 'cancelled'
             ).length
+            
+            // תפיסת router בתוך ה-scope
+            const handleNavigateToSiteHub = () => {
+              router.push(`/site-hub?building=${selectedBuilding.id}`)
+            }
+            
+            const handleEditBuilding = () => {
+              setDetailsOpen(false)
+              editRow(selectedBuilding)
+            }
 
             return (
               <>
@@ -948,12 +982,10 @@ export default function BuildingsPage() {
                     <Button 
                       variant="outline" 
                       size="sm"
-                      asChild
+                      onClick={handleNavigateToSiteHub}
                     >
-                      <Link href={`/site-hub?building=${selectedBuilding.id}`}>
-                        <ExternalLink className="h-4 w-4 ml-2" />
-                        הגדל מסך
-                      </Link>
+                      <ExternalLink className="h-4 w-4 ml-2" />
+                      הגדל מסך
                     </Button>
                   </div>
                 </DialogHeader>
@@ -1163,9 +1195,7 @@ export default function BuildingsPage() {
                     ) : (
                       <div className="space-y-3">
                         {buildingReports.map(report => {
-                          const section7Count = Array.isArray(report.items_section_7) ? report.items_section_7.length : 0
-                          const section9Count = Array.isArray(report.items_section_9) ? report.items_section_9.length : 0
-                          const hasIssues = section7Count > 0
+                          const elevator = buildingElevators.find(e => e.id === report.elevator_id)
                           
                           return (
                             <Card key={report.id} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer">
@@ -1180,26 +1210,29 @@ export default function BuildingsPage() {
                                           year: 'numeric' 
                                         })}
                                       </h4>
-                                      {hasIssues ? (
-                                        <Badge variant="destructive" className="text-xs">
-                                          <AlertTriangle className="h-3 w-3 ml-1" />
-                                          {section7Count} תיקונים
-                                        </Badge>
-                                      ) : (
-                                        <Badge variant="done" className="text-xs">
-                                          <CheckCircle className="h-3 w-3 ml-1" />
-                                          תקין
-                                        </Badge>
-                                      )}
+                                      <Badge variant="outline" className="text-xs">
+                                        <FileText className="h-3 w-3 ml-1" />
+                                        דוח בודק
+                                      </Badge>
                                     </div>
                                     {report.inspector_name && (
                                       <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">
                                         בודק: {report.inspector_name}
                                       </p>
                                     )}
-                                    {section9Count > 0 && (
-                                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                                        {section9Count} הערות למעקב
+                                    {elevator && (
+                                      <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">
+                                        מעלית: MOL {elevator.mol_number}
+                                      </p>
+                                    )}
+                                    {report.file_name && (
+                                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                        {report.file_name}
+                                      </p>
+                                    )}
+                                    {report.next_inspection_date && (
+                                      <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">
+                                        בדיקה הבאה: {new Date(report.next_inspection_date).toLocaleDateString('he-IL')}
                                       </p>
                                     )}
                                   </div>
@@ -1260,10 +1293,7 @@ export default function BuildingsPage() {
                   <Button variant="outline" onClick={() => setDetailsOpen(false)}>
                     סגור
                   </Button>
-                  <Button variant="outline" onClick={() => {
-                    setDetailsOpen(false)
-                    editRow(selectedBuilding)
-                  }}>
+                  <Button variant="outline" onClick={handleEditBuilding}>
                     <Pencil className="w-4 h-4 ml-2" />
                     ערוך בניין
                   </Button>

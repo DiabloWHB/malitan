@@ -2,7 +2,6 @@
 
 import { useEffect, useState, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
-import Link from "next/link"
 import { supabase } from "@/lib/supabaseClient"
 import { DashboardLayout } from "@/components/ui/layout/DashboardLayout"
 import { Button } from "@/components/ui/button"
@@ -27,23 +26,15 @@ import {
   Calendar,
   CheckCircle,
   AlertTriangle,
-  Clock,
   Edit,
   ExternalLink,
   Building2,
   Key,
   Car,
-  Shield,
-  DollarSign,
-  Users,
-  Gauge,
-  Weight,
-  Zap,
-  DoorOpen,
-  Box,
-  TrendingUp,
   Info,
-  MessageSquare
+  MessageSquare,
+  Gauge,
+  Weight
 } from "lucide-react"
 
 type Building = {
@@ -103,12 +94,12 @@ type Ticket = {
 
 type InspectorReport = {
   id: string
-  elevator_id: string
+  elevator_id: string | null
   report_date: string
-  items_section_7: any[]
-  items_section_9: any[]
   inspector_name: string | null
   next_inspection_date: string | null
+  file_name: string | null
+  mol_number: string | null
 }
 
 type Attachment = {
@@ -121,7 +112,7 @@ type Attachment = {
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   new: { label: "חדש", color: "bg-purple-500" },
-  assigned: { label: "שויך", color: "bg-blue-500" },
+  assigned: { label: "שוייך", color: "bg-blue-500" },
   in_progress: { label: "בטיפול", color: "bg-yellow-500" },
   waiting_parts: { label: "מחכה לחלקים", color: "bg-orange-500" },
   done: { label: "הושלם", color: "bg-green-500" },
@@ -162,6 +153,9 @@ function SiteHubContent() {
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [reports, setReports] = useState<InspectorReport[]>([])
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  
+  // Filter for tickets
+  const [ticketFilter, setTicketFilter] = useState<"all" | "active" | "completed">("active")
 
   useEffect(() => {
     if (!buildingId) {
@@ -217,9 +211,10 @@ function SiteHubContent() {
 
       if (!tError) setTickets(ticketsData || [])
 
+      // תיקון שליפת דוחות בודק!
       const { data: reportsData, error: rError } = await supabase
         .from("inspector_reports")
-        .select("*")
+        .select("id, elevator_id, report_date, inspector_name, next_inspection_date, file_name, mol_number")
         .eq("building_id", buildingId)
         .order("report_date", { ascending: false })
 
@@ -323,6 +318,29 @@ function SiteHubContent() {
   const urgentTickets = tickets.filter(t => 
     t.severity === 'critical' || t.severity === 'high'
   )
+  
+  // Filter tickets based on selection
+  const filteredTickets = ticketFilter === "all" 
+    ? tickets 
+    : ticketFilter === "active"
+      ? tickets.filter(t => t.status !== 'done' && t.status !== 'cancelled')
+      : tickets.filter(t => t.status === 'done' || t.status === 'cancelled')
+  
+  // Handler functions
+  const handleCreateTicket = () => {
+    router.push(`/tickets?new=true&building=${buildingId}`)
+  }
+  
+  const handleCreateElevator = () => {
+    router.push(`/elevators?new=true&building=${buildingId}`)
+  }
+  
+  const handleUploadFile = () => {
+    toast({
+      title: "בקרוב",
+      description: "העלאת קבצים תהיה זמינה בקרוב"
+    })
+  }
 
   return (
     <DashboardLayout>
@@ -360,7 +378,7 @@ function SiteHubContent() {
               <Edit className="h-4 w-4 ml-2" />
               ערוך
             </Button>
-            <Button size="sm">
+            <Button size="sm" onClick={handleCreateTicket}>
               <Plus className="h-4 w-4 ml-2" />
               קריאה חדשה
             </Button>
@@ -596,15 +614,23 @@ function SiteHubContent() {
                   פעולות מהירות
                 </h3>
                 <div className="space-y-2">
-                  <Button variant="outline" size="sm" className="w-full justify-start">
+                  <Button variant="outline" size="sm" className="w-full justify-start" onClick={handleCreateTicket}>
                     <Plus className="h-4 w-4 ml-2" />
                     קריאה חדשה
                   </Button>
-                  <Button variant="outline" size="sm" className="w-full justify-start">
+                  <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => {
+                    if (client?.contact_phone) {
+                      window.open(`tel:${client.contact_phone}`, '_self')
+                    } else {
+                      toast({ title: "אין מספר טלפון ללקוח" })
+                    }
+                  }}>
                     <MessageSquare className="h-4 w-4 ml-2" />
                     צור קשר
                   </Button>
-                  <Button variant="outline" size="sm" className="w-full justify-start">
+                  <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => {
+                    toast({ title: "בקרוב", description: "יצירת דוחות תהיה זמינה בקרוב" })
+                  }}>
                     <FileText className="h-4 w-4 ml-2" />
                     הפק דוח
                   </Button>
@@ -646,7 +672,7 @@ function SiteHubContent() {
                     <Wrench className="h-16 w-16 mx-auto mb-4 text-gray-300" />
                     <h3 className="text-lg font-semibold mb-2">אין מעליות בבניין</h3>
                     <p className="text-gray-600 mb-4">התחל בהוספת מעלית ראשונה</p>
-                    <Button>
+                    <Button onClick={handleCreateElevator}>
                       <Plus className="h-4 w-4 ml-2" />
                       הוסף מעלית
                     </Button>
@@ -814,60 +840,101 @@ function SiteHubContent() {
                     <AlertCircle className="h-16 w-16 mx-auto mb-4 text-gray-300" />
                     <h3 className="text-lg font-semibold mb-2">אין קריאות שירות</h3>
                     <p className="text-gray-600 mb-4">לא נמצאו קריאות לבניין זה</p>
-                    <Button>
+                    <Button onClick={handleCreateTicket}>
                       <Plus className="h-4 w-4 ml-2" />
                       קריאה חדשה
                     </Button>
                   </CardContent>
                 </Card>
               ) : (
-                <div className="space-y-3">
-                  {tickets.map(ticket => {
-                    const statusConfig = STATUS_CONFIG[ticket.status]
-                    const severityConfig = SEVERITY_CONFIG[ticket.severity]
-                    
-                    return (
-                      <Card key={ticket.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => router.push(`/tickets?id=${ticket.id}`)}>
-                        <CardContent className="p-4">
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-2">
-                                <h3 className="font-semibold text-gray-900 dark:text-gray-100">
-                                  {ticket.title}
-                                </h3>
-                                {statusConfig && (
-                                  <Badge className={`${statusConfig.color} text-white text-xs`}>
-                                    {statusConfig.label}
-                                  </Badge>
+                <div className="space-y-4">
+                  {/* Filter Buttons */}
+                  <div className="flex gap-2 mb-4">
+                    <Button
+                      variant={ticketFilter === "active" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setTicketFilter("active")}
+                    >
+                      <AlertCircle className="h-4 w-4 ml-2" />
+                      פעילות ({activeTickets.length})
+                    </Button>
+                    <Button
+                      variant={ticketFilter === "completed" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setTicketFilter("completed")}
+                    >
+                      <CheckCircle className="h-4 w-4 ml-2" />
+                      הושלמו ({tickets.filter(t => t.status === 'done' || t.status === 'cancelled').length})
+                    </Button>
+                    <Button
+                      variant={ticketFilter === "all" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setTicketFilter("all")}
+                    >
+                      כל הקריאות ({tickets.length})
+                    </Button>
+                  </div>
+
+                  {/* Tickets List */}
+                  <div className="space-y-3">
+                    {filteredTickets.map(ticket => {
+                      const statusConfig = STATUS_CONFIG[ticket.status]
+                      const severityConfig = SEVERITY_CONFIG[ticket.severity]
+                      const isCompleted = ticket.status === 'done' || ticket.status === 'cancelled'
+                      
+                      return (
+                        <Card 
+                          key={ticket.id} 
+                          className={`hover:shadow-md transition-shadow cursor-pointer ${
+                            isCompleted ? 'opacity-60 bg-gray-50 dark:bg-gray-800/50' : ''
+                          }`}
+                          onClick={() => router.push(`/tickets/${ticket.id}`)}
+                        >
+                          <CardContent className="p-4">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <h3 className={`font-semibold ${
+                                    isCompleted 
+                                      ? 'text-gray-600 dark:text-gray-400 line-through' 
+                                      : 'text-gray-900 dark:text-gray-100'
+                                  }`}>
+                                    {ticket.title}
+                                  </h3>
+                                  {statusConfig && (
+                                    <Badge className={`${statusConfig.color} text-white text-xs`}>
+                                      {statusConfig.label}
+                                    </Badge>
+                                  )}
+                                </div>
+                                {ticket.description && (
+                                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2 line-clamp-2">
+                                    {ticket.description}
+                                  </p>
                                 )}
-                              </div>
-                              {ticket.description && (
-                                <p className="text-sm text-gray-600 dark:text-gray-400 mb-2 line-clamp-2">
-                                  {ticket.description}
-                                </p>
-                              )}
-                              <div className="flex items-center gap-3 text-xs text-gray-500">
-                                <span>נפתח {getRelativeTime(ticket.created_at)}</span>
-                                {severityConfig && (
-                                  <>
-                                    <Separator orientation="vertical" className="h-3" />
-                                    <span className={severityConfig.color + " font-medium"}>
-                                      {severityConfig.label}
-                                    </span>
-                                  </>
-                                )}
+                                <div className="flex items-center gap-3 text-xs text-gray-500">
+                                  <span>נפתח {getRelativeTime(ticket.created_at)}</span>
+                                  {severityConfig && (
+                                    <>
+                                      <Separator orientation="vertical" className="h-3" />
+                                      <span className={severityConfig.color + " font-medium"}>
+                                        {severityConfig.label}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )
-                  })}
+                          </CardContent>
+                        </Card>
+                      )
+                    })}
+                  </div>
                 </div>
               )}
             </TabsContent>
 
-            {/* Reports Tab */}
+            {/* Reports Tab - מתוקן! */}
             <TabsContent value="reports" className="p-6">
               {reports.length === 0 ? (
                 <Card>
@@ -880,9 +947,6 @@ function SiteHubContent() {
               ) : (
                 <div className="space-y-3">
                   {reports.map(report => {
-                    const section7Count = Array.isArray(report.items_section_7) ? report.items_section_7.length : 0
-                    const section9Count = Array.isArray(report.items_section_9) ? report.items_section_9.length : 0
-                    const hasIssues = section7Count > 0
                     const elevator = elevators.find(e => e.id === report.elevator_id)
                     
                     return (
@@ -898,26 +962,33 @@ function SiteHubContent() {
                                     year: 'numeric' 
                                   })}
                                 </h3>
-                                {hasIssues ? (
-                                  <Badge variant="destructive">
-                                    <AlertTriangle className="h-3 w-3 ml-1" />
-                                    {section7Count} ליקויים
-                                  </Badge>
-                                ) : (
-                                  <Badge className="bg-green-500 text-white">
-                                    <CheckCircle className="h-3 w-3 ml-1" />
-                                    תקין
-                                  </Badge>
-                                )}
+                                <Badge variant="outline" className="text-xs">
+                                  <FileText className="h-3 w-3 ml-1" />
+                                  דוח בודק
+                                </Badge>
                               </div>
-                              {elevator && (
+                              {elevator ? (
                                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
                                   מעלית: MOL {elevator.mol_number}
                                 </p>
+                              ) : report.mol_number && (
+                                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                                  מעלית: MOL {report.mol_number}
+                                </p>
                               )}
                               {report.inspector_name && (
-                                <p className="text-sm text-gray-600 dark:text-gray-400">
+                                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
                                   בודק: {report.inspector_name}
+                                </p>
+                              )}
+                              {report.file_name && (
+                                <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-1">
+                                  {report.file_name}
+                                </p>
+                              )}
+                              {report.next_inspection_date && (
+                                <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">
+                                  בדיקה הבאה: {new Date(report.next_inspection_date).toLocaleDateString('he-IL')}
                                 </p>
                               )}
                             </div>
@@ -942,7 +1013,7 @@ function SiteHubContent() {
                     <Paperclip className="h-16 w-16 mx-auto mb-4 text-gray-300" />
                     <h3 className="text-lg font-semibold mb-2">אין קבצים</h3>
                     <p className="text-gray-600 mb-4">לא נמצאו קבצים מצורפים</p>
-                    <Button>
+                    <Button onClick={handleUploadFile}>
                       <Plus className="h-4 w-4 ml-2" />
                       העלה קובץ
                     </Button>
